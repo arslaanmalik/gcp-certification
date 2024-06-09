@@ -1,0 +1,129 @@
+
+///Implement Load Balancing on Compute Engine: Challenge Lab///
+
+
+
+gcloud config get-value compute/region
+gcloud config get-value compute/zone
+
+
+gcloud config set compute/region us-central1
+gcloud config set compute/zone us-central1-c
+
+
+gcloud compute instances create nucleus-jumphost-307 \
+    --machine-type e2-micro \
+    --zone zone
+
+
+cat << EOF > startup.sh
+#! /bin/bash
+apt-get update
+apt-get install -y nginx
+service nginx start
+sed -i -- 's/nginx/Google Cloud Platform - '"\$HOSTNAME"'/' /var/www/html/index.nginx-debian.html
+EOF
+
+
+•	Create an instance template. Don't use the default machine type. Make sure you specify e2-medium as the machine type.
+
+gcloud compute instance-templates create nucleus-template \
+   --region=us-central1 \
+   --network=default \
+   --subnet=default \
+   --tags=allow-health-check \
+   --machine-type=e2-medium \
+   --metadata-from-file startup-script=startup.sh
+
+gcloud compute instance-templates list
+
+•	Create a managed instance group based on the template.
+
+gcloud compute target-pools create nucleus-pool
+
+•	
+
+
+gcloud compute instance-groups managed create nucleus-group \
+         --base-instance-name nucleus-webserver \
+         --size 2 \
+         --template nucleus-template \
+         --target-pool nucleus-pool
+
+•	Create a firewall rule named as Firewall rule to allow traffic (80/tcp).
+
+
+gcloud compute firewall-rules create accept-tcp-rule-651 \
+  --network=default \
+  --action=allow \
+  --direction=ingress \
+  --source-ranges=130.211.0.0/22,35.191.0.0/16 \
+  --target-tags=allow-health-check \
+  --rules=tcp:80
+
+
+
+————
+gcloud compute addresses create lb-ipv4-1 \
+  --ip-version=IPV4 \
+  --global
+
+
+gcloud compute addresses describe lb-ipv4-1 \
+  --format="get(address)" \
+  --global
+
+—————
+
+
+	•	Create a health check.
+
+gcloud compute health-checks create http http-basic-check \
+  --port 80
+
+——
+gcloud compute instance-groups managed \
+       set-named-ports nucleus-group \
+       --named-ports http:80
+
+——
+
+•	Create a backend service and add your instance group as the backend to the backend service group with named port (http:80).
+
+
+gcloud compute backend-services create nucleus-backend \
+  --protocol=HTTP \
+  --port-name=http \
+  --health-checks=http-basic-check \
+  --global
+
+gcloud compute backend-services add-backend nucleus-backend \
+    --instance-group nucleus-group\
+    --instance-group-zone us-central1-c \
+    --global
+
+•	Create a URL map, and target the HTTP proxy to route the incoming requests to the default backend service.
+
+gcloud compute url-maps create web-map \
+    --default-service nucleus-backend
+
+
+•	Create a target HTTP proxy to route requests to your URL map
+
+gcloud compute target-http-proxies create http-lb-proxy \
+    --url-map web-map
+
+•	Create a forwarding rule.
+
+gcloud compute forwarding-rules create http-content-rule \
+   --address=lb-ipv4-1\
+   --global \
+   --target-http-proxy=http-lb-proxy \
+   --ports=80
+
+
+
+gcloud compute forwarding-rules list
+
+
+
